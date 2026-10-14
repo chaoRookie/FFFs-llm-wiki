@@ -61,14 +61,19 @@ export interface DrawGlyphOptions {
   style: GlyphStyle
 }
 
-export function glyphForType(type: string): GlyphKind {
+/**
+ * Glyph for a page: entities split into models, algorithms and systems (hex
+ * cell) and people, organisations, datasets and hardware (globe); sources split into AI session summaries (DNA) and
+ * papers or other material (petals).
+ */
+export function glyphForType(type: string, subtype?: string): GlyphKind {
   switch (type) {
     case "entity":
-      return "globe"
+      return subtype === "model" || subtype === "tool" ? "hex" : "globe"
     case "concept":
       return "ring"
     case "source":
-      return "petal"
+      return subtype === "session" ? "dna" : "petal"
     case "topic":
     case "synthesis":
     case "overview":

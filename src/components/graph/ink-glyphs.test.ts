@@ -29,6 +29,11 @@ describe("ink glyphs", () => {
     expect(glyphForType("source")).toBe("petal")
     expect(glyphForType("topic")).toBe("dna")
     expect(glyphForType("comparison")).toBe("hex")
+    expect(glyphForType("entity", "model")).toBe("hex")
+    expect(glyphForType("entity", "tool")).toBe("hex")
+    expect(glyphForType("entity", "person")).toBe("globe")
+    expect(glyphForType("source", "session")).toBe("dna")
+    expect(glyphForType("source", "paper")).toBe("petal")
   })
 
   it("draws nothing at progress 0 and more ink as the glyph grows", () => {

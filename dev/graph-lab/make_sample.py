@@ -22,10 +22,15 @@ for path in wiki.rglob("*.md"):
         found = re.search(rf'^{key}:\s*"?(.*?)"?\s*$', fm, re.M)
         return found.group(1) if found else ""
 
+    kind = (field("type") or "other").lower()
+    subtype = (field("subtype") or "").lower() or None
+    if not subtype and kind == "source" and re.search(r"(^|/)(codex|claude|deepseek)/", field("sources"), re.I):
+        subtype = "session"  # same rule as src/lib/wiki-graph.ts
     pages[path.stem] = {
         "id": path.stem,
         "label": field("title") or path.stem,
-        "type": (field("type") or "other").lower(),
+        "type": kind,
+        "subtype": subtype,
         "trunk": field("trunk") or None,
         "titleZh": field("title_zh") or None,
         "path": path.name,
@@ -38,7 +43,7 @@ for a, b in edges:
     degree[a] += 1
     degree[b] += 1
 nodes = [
-    {k: v for k, v in {**{k: p[k] for k in ("id", "label", "type", "path", "trunk", "titleZh")}, "linkCount": degree[p["id"]], "community": 0}.items() if v is not None}
+    {k: v for k, v in {**{k: p[k] for k in ("id", "label", "type", "subtype", "path", "trunk", "titleZh")}, "linkCount": degree[p["id"]], "community": 0}.items() if v is not None}
     for p in pages.values()
 ]
 out = Path(__file__).with_name("sample.json")

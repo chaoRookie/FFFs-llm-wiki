@@ -501,7 +501,7 @@ export function InkGraphCanvas({
     const inkNodes: InkNode[] = nodes.map((n, i) => {
       const prev = previous.get(n.id)
       const cached = positionCache.get(n.id)
-      const kind = glyphForType(n.type)
+      const kind = glyphForType(n.type, n.subtype)
       const names = splitBilingualTitle(n.label, n.titleZh)
       return {
         id: n.id,

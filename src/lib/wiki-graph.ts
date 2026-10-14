@@ -14,6 +14,7 @@ export interface GraphNode {
   community: number // community id from Louvain detection
   trunk?: string // frontmatter `trunk`, used by the trunk color mode
   titleZh?: string // frontmatter `title_zh`, the short Chinese name shown under the glyph
+  subtype?: string // e.g. "model" for entities, "session" for AI-conversation sources
 }
 
 export interface GraphEdge {
@@ -112,6 +113,22 @@ function extractTrunk(content: string): string | undefined {
 function extractTitleZh(content: string): string | undefined {
   const titleZh = parseFrontmatter(content).frontmatter?.title_zh
   if (typeof titleZh === "string" && titleZh.trim()) return titleZh.trim()
+  return undefined
+}
+
+const SESSION_SOURCE = /(^|\/)(codex|claude|deepseek)\//i
+
+/**
+ * Frontmatter `subtype`, or for source pages without one, "session" when the
+ * page was compiled from an exported AI conversation (codex/claude/deepseek).
+ */
+function extractSubtype(content: string, type: string): string | undefined {
+  const fm = parseFrontmatter(content).frontmatter
+  const subtype = fm?.subtype
+  if (typeof subtype === "string" && subtype.trim()) return subtype.trim().toLowerCase()
+  if (type === "source" && Array.isArray(fm?.sources)) {
+    if (fm.sources.some((s: unknown) => typeof s === "string" && SESSION_SOURCE.test(s))) return "session"
+  }
   return undefined
 }
 
@@ -235,7 +252,7 @@ async function buildWikiGraphUncached(projectPath: string): Promise<WikiGraphRes
   // Build a map of id -> node data
   const nodeMap = new Map<
     string,
-    { id: string; label: string; type: string; trunk?: string; titleZh?: string; path: string; links: string[] }
+    { id: string; label: string; type: string; trunk?: string; titleZh?: string; subtype?: string; path: string; links: string[] }
   >()
 
   const parsedFiles = await mapWithConcurrency(
@@ -245,10 +262,12 @@ async function buildWikiGraphUncached(projectPath: string): Promise<WikiGraphRes
       try {
         const content = await readFile(file.path)
         const id = fileNameToId(file.name)
+        const type = extractType(content)
         return {
           id,
           label: extractTitle(content, file.name),
-          type: extractType(content),
+          type,
+          subtype: extractSubtype(content, type),
           trunk: extractTrunk(content),
           titleZh: extractTitleZh(content),
           path: file.path,
@@ -350,6 +369,7 @@ async function buildWikiGraphUncached(projectPath: string): Promise<WikiGraphRes
     community: assignments.get(n.id) ?? 0,
     trunk: n.trunk,
     titleZh: n.titleZh,
+    subtype: n.subtype,
   }))
 
   return { nodes, edges, communities }

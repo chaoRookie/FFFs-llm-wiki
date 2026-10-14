@@ -86,11 +86,11 @@ type GraphPreview = {
 }
 
 const GLYPH_LEGEND: Array<{ kind: GlyphKind; labelKey: string }> = [
+  { kind: "hex", labelKey: "graph.glyphModel" },
   { kind: "globe", labelKey: "graph.glyphEntity" },
   { kind: "ring", labelKey: "graph.glyphConcept" },
   { kind: "petal", labelKey: "graph.glyphSource" },
-  { kind: "dna", labelKey: "graph.glyphTopic" },
-  { kind: "hex", labelKey: "graph.glyphOther" },
+  { kind: "dna", labelKey: "graph.glyphSession" },
 ]
 
 /** A finished glyph drawn with the graph's own ink code, for the legend. */

@@ -172,3 +172,22 @@ describe("buildWikiGraph trunk extraction", () => {
     expect(byLabel.B.trunk).toBeUndefined()
   })
 })
+
+describe("buildWikiGraph subtype", () => {
+  it("uses frontmatter subtype and infers AI-session sources from their source path", async () => {
+    const buildWikiGraph = await loadBuildWikiGraph()
+    mockListDirectory.mockResolvedValue([mdFile("m.md"), mdFile("s.md"), mdFile("p.md")])
+    mockReadFile.mockImplementation(async (path: string) => {
+      if (path.endsWith("m.md")) return "---\ntitle: M\ntype: entity\nsubtype: Model\n---\n"
+      if (path.endsWith("s.md")) return '---\ntitle: S\ntype: source\nsources: ["AI工具经验/codex/2026-10/codex-x.md"]\n---\n'
+      return '---\ntitle: P\ntype: source\nsources: ["科研读博/论文/1706.03762 - Attention.pdf"]\n---\n'
+    })
+
+    const graph = await buildWikiGraph("/project")
+    const byLabel = Object.fromEntries(graph.nodes.map((n) => [n.label, n]))
+
+    expect(byLabel.M.subtype).toBe("model")
+    expect(byLabel.S.subtype).toBe("session")
+    expect(byLabel.P.subtype).toBeUndefined()
+  })
+})
