@@ -12,6 +12,8 @@ export interface GraphNode {
   path: string
   linkCount: number // inbound + outbound
   community: number // community id from Louvain detection
+  trunk?: string // frontmatter `trunk`, used by the trunk color mode
+  titleZh?: string // frontmatter `title_zh`, the short Chinese name shown under the glyph
 }
 
 export interface GraphEdge {
@@ -99,6 +101,18 @@ function extractType(content: string): string {
   const type = parseFrontmatter(content).frontmatter?.type
   if (typeof type === "string" && type.trim()) return type.trim().toLowerCase()
   return "other"
+}
+
+function extractTrunk(content: string): string | undefined {
+  const trunk = parseFrontmatter(content).frontmatter?.trunk
+  if (typeof trunk === "string" && trunk.trim()) return trunk.trim()
+  return undefined
+}
+
+function extractTitleZh(content: string): string | undefined {
+  const titleZh = parseFrontmatter(content).frontmatter?.title_zh
+  if (typeof titleZh === "string" && titleZh.trim()) return titleZh.trim()
+  return undefined
 }
 
 function extractWikilinks(content: string): string[] {
@@ -221,7 +235,7 @@ async function buildWikiGraphUncached(projectPath: string): Promise<WikiGraphRes
   // Build a map of id -> node data
   const nodeMap = new Map<
     string,
-    { id: string; label: string; type: string; path: string; links: string[] }
+    { id: string; label: string; type: string; trunk?: string; titleZh?: string; path: string; links: string[] }
   >()
 
   const parsedFiles = await mapWithConcurrency(
@@ -235,6 +249,8 @@ async function buildWikiGraphUncached(projectPath: string): Promise<WikiGraphRes
           id,
           label: extractTitle(content, file.name),
           type: extractType(content),
+          trunk: extractTrunk(content),
+          titleZh: extractTitleZh(content),
           path: file.path,
           links: Array.from(new Set([...extractWikilinks(content), ...extractRelated(content)])),
         }
@@ -332,6 +348,8 @@ async function buildWikiGraphUncached(projectPath: string): Promise<WikiGraphRes
     path: n.path,
     linkCount: linkCounts.get(n.id) ?? 0,
     community: assignments.get(n.id) ?? 0,
+    trunk: n.trunk,
+    titleZh: n.titleZh,
   }))
 
   return { nodes, edges, communities }

@@ -22,6 +22,19 @@
   English | <a href="README_CN.md">中文</a> | <a href="README_JA.md">日本語</a> | <a href="README_KO.md">한국어</a>
 </p>
 
+> **About this fork — FFFs-llm-wiki**
+>
+> A fork of [nashsu/llm_wiki](https://github.com/nashsu/llm_wiki) (GPL-3.0) with a redesigned, hand-drawn knowledge graph. Changes in this fork:
+>
+> - **Ink graph**: the Sigma/WebGL graph is replaced by a canvas graph on [force-graph](https://github.com/vasturiano/force-graph) (d3-force), drawn like ink on warm paper. Page types are hand-drawn glyphs — entity = globe, concept = hollow ring, source = four petals, topic/overview = DNA, other = hexagon cell — that grow stroke by stroke from a simple resting form to the full pattern when you hover (`src/components/graph/ink-graph-canvas.tsx`, `ink-glyphs.ts`).
+> - **Feel**: heavy damping so dragging feels like rice paper in water — the dragged node trails the pointer, neighbours follow, ink bleeds while moving, the web drifts gently at rest. Hover waits for the pointer to rest before anything grows.
+> - **Trunk colour mode** (new default): colours nodes by the frontmatter `trunk` field; glyph shapes always show the page type, and the legend explains both.
+> - **Bilingual labels**: a tiny Chinese caption under every node and "English + 中文" hover labels, from the title or a new frontmatter field `title_zh` (`src/lib/bilingual-title.ts`).
+> - **Paper theme**: the light theme is warm ivory paper (`#F0EEE6`) with ink text.
+> - **Graph lab**: `dev/graph-lab/` renders the graph in a plain browser for design work (see the header of `main.tsx`).
+>
+> All original copyright notices are kept; this fork is distributed under the same GPL-3.0 licence.
+
 ---
 
 <p align="center">

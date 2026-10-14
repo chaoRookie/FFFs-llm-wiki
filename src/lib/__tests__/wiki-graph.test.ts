@@ -154,3 +154,21 @@ describe("buildWikiGraph frontmatter extraction", () => {
     expect(mockReadFile).toHaveBeenCalledTimes(2)
   })
 })
+
+describe("buildWikiGraph trunk extraction", () => {
+  it("reads the frontmatter trunk and leaves it undefined when absent", async () => {
+    const buildWikiGraph = await loadBuildWikiGraph()
+    mockListDirectory.mockResolvedValue([mdFile("a.md"), mdFile("b.md")])
+    mockReadFile.mockImplementation(async (path: string) =>
+      path.endsWith("a.md")
+        ? "---\ntitle: A\ntype: concept\ntrunk: 科研读博\n---\n# A\n"
+        : "---\ntitle: B\ntype: concept\n---\n# B\n",
+    )
+
+    const graph = await buildWikiGraph("/project")
+    const byLabel = Object.fromEntries(graph.nodes.map((n) => [n.label, n]))
+
+    expect(byLabel.A.trunk).toBe("科研读博")
+    expect(byLabel.B.trunk).toBeUndefined()
+  })
+})

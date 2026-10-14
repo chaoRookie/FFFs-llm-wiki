@@ -238,7 +238,7 @@ interface ApiConfig {
 
 export type CloseBehavior = "ask" | "minimize" | "exit"
 
-export type GraphColorMode = "type" | "community"
+export type GraphColorMode = "type" | "community" | "trunk"
 
 export interface GraphUiState {
   colorMode: GraphColorMode
@@ -249,7 +249,7 @@ export interface GraphUiState {
 
 export function createDefaultGraphUiState(): GraphUiState {
   return {
-    colorMode: "type",
+    colorMode: "trunk",
     filters: {
       ...DEFAULT_GRAPH_FILTERS,
       hiddenTypes: new Set(),

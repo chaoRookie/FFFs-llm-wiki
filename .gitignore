@@ -49,3 +49,8 @@ pnpm-debug.log*
 # Brainstorm assets (not tracked in source control)
 .superpowers/
 .claude/
+
+# Graph lab: sample data is generated from a private wiki, never committed
+dev/graph-lab/sample.json
+# Design-skill scratch output
+.taste-skill/

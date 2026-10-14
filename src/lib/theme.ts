@@ -18,7 +18,7 @@ function isTauriRuntime(): boolean {
 function syncNativeWindowTheme(resolved: NativeTheme): void {
   if (!isTauriRuntime()) return
   const win = getCurrentWindow()
-  const background = resolved === "dark" ? "#27282b" : "#ffffff"
+  const background = resolved === "dark" ? "#27282b" : "#F0EEE6"
   void win.setTheme(resolved).catch((err) => {
     console.warn("[theme] failed to sync native window theme:", err)
   })

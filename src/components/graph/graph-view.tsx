@@ -1,11 +1,7 @@
 import { useEffect, useCallback, useMemo, useState, useRef, type ChangeEvent, type SetStateAction } from "react"
-import Graph from "graphology"
-import { SigmaContainer, useLoadGraph, useRegisterEvents, useSetSettings, useSigma } from "@react-sigma/core"
-import "@react-sigma/core/lib/style.css"
-import type { NodeHoverDrawingFunction } from "sigma/rendering"
-import type { SigmaNodeEventPayload } from "sigma/types"
-import forceAtlas2 from "graphology-layout-forceatlas2"
-import { Network, RefreshCw, ZoomIn, ZoomOut, Maximize, Layers, Tag, Lightbulb, AlertTriangle, Link2, X, Search, Loader2, Filter, RotateCcw, EyeOff } from "lucide-react"
+import { INK, INK_PAPER, InkGraphCanvas } from "./ink-graph-canvas"
+import { drawGlyph, type GlyphKind } from "./ink-glyphs"
+import { Network, RefreshCw, Layers, Tag, Lightbulb, AlertTriangle, Link2, X, Search, Loader2, Filter, RotateCcw, EyeOff } from "lucide-react"
 import { ErrorBoundary } from "@/components/error-boundary"
 import { useResearchStore } from "@/stores/research-store"
 import { Button } from "@/components/ui/button"
@@ -39,6 +35,22 @@ const NODE_TYPE_COLORS: Record<string, string> = {
   other: "#94a3b8",     // slate-400
 }
 
+// Trunk color mode: one color per top-level knowledge trunk (frontmatter `trunk`).
+const TRUNK_COLORS: Record<string, string> = {
+  科研读博: "#D97757",
+  AI工具经验: "#6A9BCC",
+  第二大脑: "#788C5D",
+}
+const NO_TRUNK_COLOR = "#B9B5AA"
+
+function trunkColor(trunk: string | undefined): string {
+  if (!trunk) return NO_TRUNK_COLOR
+  if (TRUNK_COLORS[trunk]) return TRUNK_COLORS[trunk]
+  let hash = 0
+  for (const char of trunk) hash = (hash * 31 + char.charCodeAt(0)) >>> 0
+  return CUSTOM_NODE_COLORS[hash % CUSTOM_NODE_COLORS.length] ?? NO_TRUNK_COLOR
+}
+
 const CUSTOM_NODE_COLORS = [
   "#38bdf8",
   "#34d399",
@@ -65,140 +77,57 @@ const COMMUNITY_COLORS = [
   "#fbbf24",  // amber-400
 ]
 
-type GraphThemePalette = {
-  defaultEdge: string
-  label: string
-  hoverLabelText: string
-  hoverLabelBackground: string
-  hoverLabelBorder: string
-  hoverLabelShadow: string
-  mutedNodeMixTarget: string
-  dimmedEdge: string
-  activeEdge: string
-}
-
-const BASE_NODE_SIZE = 8
-const MAX_NODE_SIZE = 28
 const DEFAULT_GRAPH_SPACING = 1
 const GRAPH_SPACING_DEBOUNCE_MS = 180
-const WORKER_LAYOUT_NODE_THRESHOLD = 220
-
-type HoverState = { node: string; neighbors: Set<string> } | null
 type GraphPreview = {
   path: string
   title: string
   content: string
 }
 
-function graphThemePalette(isDark: boolean): GraphThemePalette {
-  return isDark
-    ? {
-        defaultEdge: "rgba(100,116,139,0.18)",
-        label: "#f8fafc",
-        hoverLabelText: "#f8fafc",
-        hoverLabelBackground: "rgba(15,23,42,0.94)",
-        hoverLabelBorder: "rgba(148,163,184,0.38)",
-        hoverLabelShadow: "rgba(2,6,23,0.55)",
-        mutedNodeMixTarget: "#334155",
-        dimmedEdge: "rgba(71,85,105,0.12)",
-        activeEdge: "#38bdf8",
-      }
-    : {
-        defaultEdge: "#cbd5e1",
-        label: "#1e293b",
-        hoverLabelText: "#0f172a",
-        hoverLabelBackground: "rgba(255,255,255,0.97)",
-        hoverLabelBorder: "rgba(15,23,42,0.14)",
-        hoverLabelShadow: "rgba(15,23,42,0.18)",
-        mutedNodeMixTarget: "#e2e8f0",
-        dimmedEdge: "rgba(148,163,184,0.22)",
-        activeEdge: "#1e293b",
-      }
-}
+const GLYPH_LEGEND: Array<{ kind: GlyphKind; labelKey: string }> = [
+  { kind: "globe", labelKey: "graph.glyphEntity" },
+  { kind: "ring", labelKey: "graph.glyphConcept" },
+  { kind: "petal", labelKey: "graph.glyphSource" },
+  { kind: "dna", labelKey: "graph.glyphTopic" },
+  { kind: "hex", labelKey: "graph.glyphOther" },
+]
 
-function drawRoundedRect(
-  context: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  radius: number,
-) {
-  const safeRadius = Math.min(radius, width / 2, height / 2)
-  context.beginPath()
-  context.moveTo(x + safeRadius, y)
-  context.lineTo(x + width - safeRadius, y)
-  context.quadraticCurveTo(x + width, y, x + width, y + safeRadius)
-  context.lineTo(x + width, y + height - safeRadius)
-  context.quadraticCurveTo(x + width, y + height, x + width - safeRadius, y + height)
-  context.lineTo(x + safeRadius, y + height)
-  context.quadraticCurveTo(x, y + height, x, y + height - safeRadius)
-  context.lineTo(x, y + safeRadius)
-  context.quadraticCurveTo(x, y, x + safeRadius, y)
-  context.closePath()
-}
-
-function createGraphNodeHoverRenderer(palette: GraphThemePalette): NodeHoverDrawingFunction {
-  return (context, data, settings) => {
-    const label = typeof data.label === "string" ? data.label : ""
-    const labelSize = settings.labelSize
-    const font = settings.labelFont
-    const weight = settings.labelWeight
-    const nodeRadius = Math.max(data.size, labelSize / 2) + 3
-
-    context.save()
-    context.shadowOffsetX = 0
-    context.shadowOffsetY = 2
-    context.shadowBlur = 10
-    context.shadowColor = palette.hoverLabelShadow
-    context.fillStyle = palette.hoverLabelBackground
-    context.strokeStyle = palette.hoverLabelBorder
-    context.lineWidth = 1
-
-    context.beginPath()
-    context.arc(data.x, data.y, nodeRadius, 0, Math.PI * 2)
-    context.closePath()
-    context.fill()
-    context.stroke()
-
-    if (label) {
-      context.font = `${weight} ${labelSize}px ${font}`
-      const paddingX = 8
-      const paddingY = 4
-      const gap = 6
-      const textWidth = context.measureText(label).width
-      const boxWidth = Math.ceil(textWidth + paddingX * 2)
-      const boxHeight = Math.ceil(labelSize + paddingY * 2)
-      const boxX = data.x + nodeRadius + gap
-      const boxY = data.y - boxHeight / 2
-
-      drawRoundedRect(context, boxX, boxY, boxWidth, boxHeight, 5)
-      context.fill()
-      context.stroke()
-
-      context.shadowBlur = 0
-      context.shadowOffsetY = 0
-      context.fillStyle = palette.hoverLabelText
-      context.fillText(label, boxX + paddingX, data.y + labelSize / 3)
-    }
-
-    context.restore()
-  }
-}
-
-function useResolvedDarkMode(): boolean {
-  const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains("dark"))
-
+/** A finished glyph drawn with the graph's own ink code, for the legend. */
+function GlyphMark({ kind }: { kind: GlyphKind }) {
+  const ref = useRef<HTMLCanvasElement>(null)
   useEffect(() => {
-    const root = document.documentElement
-    const sync = () => setIsDark(root.classList.contains("dark"))
-    sync()
-    const observer = new MutationObserver(sync)
-    observer.observe(root, { attributes: true, attributeFilter: ["class"] })
-    return () => observer.disconnect()
-  }, [])
+    const canvas = ref.current
+    const ctx = canvas?.getContext("2d")
+    if (!canvas || !ctx) return
+    const size = 16
+    const dpr = window.devicePixelRatio || 1
+    canvas.width = size * dpr
+    canvas.height = size * dpr
+    ctx.scale(dpr, dpr)
+    drawGlyph(ctx, kind, {
+      x: size / 2,
+      y: size / 2,
+      radius: kind === "hex" ? 5.2 : 6.2,
+      progress: 1,
+      seed: 7,
+      time: 0,
+      bleed: 0,
+      style: { color: "#B9B5AA", ink: INK, paper: INK_PAPER },
+    })
+  }, [kind])
+  return <canvas ref={ref} className="h-4 w-4 shrink-0" aria-hidden="true" />
+}
 
-  return isDark
+/** Small hand-drawn globe used as the trunk legend mark. */
+function GlobeMark({ color }: { color: string }) {
+  return (
+    <svg viewBox="-12 -12 24 24" className="h-4 w-4 shrink-0" aria-hidden="true">
+      <circle r="10" fill={color} stroke={INK} strokeWidth="1.6" />
+      <ellipse rx="4.6" ry="10" fill="none" stroke={INK} strokeWidth="1.2" />
+      <path d="M-10 0H10M-8.4-5.2Q0-7.4 8.4-5.2M-8.4 5.2Q0 7.4 8.4 5.2" fill="none" stroke={INK} strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  )
 }
 
 function nodeColor(type: string): string {
@@ -215,424 +144,12 @@ function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r},${g},${b},${alpha})`
 }
 
-function mixColor(color1: string, color2: string, ratio: number): string {
-  const hex = (c: string) => parseInt(c, 16)
-  const r1 = hex(color1.slice(1, 3)), g1 = hex(color1.slice(3, 5)), b1 = hex(color1.slice(5, 7))
-  const r2 = hex(color2.slice(1, 3)), g2 = hex(color2.slice(3, 5)), b2 = hex(color2.slice(5, 7))
-  const r = Math.round(r1 + (r2 - r1) * ratio)
-  const g = Math.round(g1 + (g2 - g1) * ratio)
-  const b = Math.round(b1 + (b2 - b1) * ratio)
-  return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`
-}
-
-function graphDensityScale(nodeCount: number): number {
-  if (nodeCount <= 150) return 1
-  return Math.max(0.35, Math.sqrt(150 / nodeCount))
-}
-
-function nodeSize(linkCount: number, maxLinks: number, nodeCount: number, userScale: number): number {
-  if (maxLinks === 0) return BASE_NODE_SIZE
-  const ratio = linkCount / maxLinks
-  const size = BASE_NODE_SIZE + Math.sqrt(ratio) * (MAX_NODE_SIZE - BASE_NODE_SIZE)
-  return size * graphDensityScale(nodeCount) * userScale
-}
-
-function layoutIterations(nodeCount: number): number {
-  if (nodeCount > 2500) return 28
-  if (nodeCount > 1200) return 40
-  if (nodeCount > 600) return 65
-  if (nodeCount > 250) return 90
-  return 140
-}
-
-function edgeVisibilityThreshold(nodeCount: number): number {
-  if (nodeCount > 2500) return 0.16
-  if (nodeCount > 1200) return 0.1
-  if (nodeCount > 700) return 0.05
-  return 0
-}
-
-function labelSizeThreshold(nodeCount: number): number {
-  if (nodeCount > 2500) return 18
-  if (nodeCount > 1200) return 14
-  if (nodeCount > 600) return 10
-  return 6
-}
-
-function labelDensity(nodeCount: number): number {
-  if (nodeCount > 2500) return 0.08
-  if (nodeCount > 1200) return 0.14
-  if (nodeCount > 600) return 0.24
-  return 0.4
-}
-
-function graphDataKey(nodes: readonly GraphNode[], edges: readonly GraphEdge[], graphSpacing: number): string {
-  const nodeIds = nodes.map((n) => n.id).sort()
-  const edgeIds = edges
-    .map((e) => `${e.source}->${e.target}:${Math.round(e.weight * 1000)}`)
-    .sort()
-  return `${hashParts(nodeIds)}:${hashParts(edgeIds)}:${nodes.length}:${edges.length}:${graphSpacing.toFixed(2)}`
-}
-
-function hashParts(parts: readonly string[]): string {
-  let hash = 2166136261
-  for (const part of parts) {
-    for (let i = 0; i < part.length; i++) {
-      hash ^= part.charCodeAt(i)
-      hash = Math.imul(hash, 16777619)
-    }
-    hash ^= 0xff
-    hash = Math.imul(hash, 16777619)
-  }
-  return (hash >>> 0).toString(36)
-}
-
-function makeLayoutWorker(): Worker | null {
-  try {
-    return new Worker(new URL("./graph-layout-worker.ts", import.meta.url), { type: "module" })
-  } catch (err) {
-    console.warn("[Graph] failed to start layout worker; falling back to main-thread layout:", err)
-    return null
-  }
-}
-
-// --- Inner components ---
-
-// Cache computed node positions so re-renders don't re-layout
-const positionCache = new Map<string, { x: number; y: number }>()
-let lastLayoutDataKey = ""
-let pendingLayoutDataKey = ""
-
-function GraphLoader({
-  nodes,
-  edges,
-  colorMode,
-  nodeScale,
-  graphSpacing,
-}: {
-  nodes: GraphNode[]
-  edges: GraphEdge[]
-  colorMode: GraphColorMode
-  nodeScale: number
-  graphSpacing: number
-}) {
-  const loadGraph = useLoadGraph()
-  const sigma = useSigma()
-
-  useEffect(() => {
-    const dataKey = graphDataKey(nodes, edges, graphSpacing)
-    const needsLayout = dataKey !== lastLayoutDataKey && dataKey !== pendingLayoutDataKey
-    let cancelled = false
-    let worker: Worker | null = null
-
-    const graph = new Graph()
-    const maxLinks = Math.max(...nodes.map((n) => n.linkCount), 1)
-    const weakEdgeThreshold = edgeVisibilityThreshold(nodes.length)
-
-    for (const node of nodes) {
-      const cached = positionCache.get(node.id)
-      const color = colorMode === "community"
-        ? COMMUNITY_COLORS[node.community % COMMUNITY_COLORS.length]
-        : nodeColor(node.type)
-      graph.addNode(node.id, {
-        type: "circle",
-        x: cached?.x ?? Math.random() * 100,
-        y: cached?.y ?? Math.random() * 100,
-        size: nodeSize(node.linkCount, maxLinks, nodes.length, nodeScale),
-        color,
-        label: node.label,
-        nodeType: node.type,
-        nodePath: node.path,
-        community: node.community,
-      })
-    }
-
-    // Calculate max weight for normalization
-    const maxWeight = Math.max(...edges.map((e) => e.weight), 1)
-
-    for (const edge of edges) {
-      if (graph.hasNode(edge.source) && graph.hasNode(edge.target)) {
-        const edgeKey = `${edge.source}->${edge.target}`
-        if (!graph.hasEdge(edgeKey) && !graph.hasEdge(`${edge.target}->${edge.source}`)) {
-          const normalizedWeight = edge.weight / maxWeight // 0..1
-          const size = 0.5 + normalizedWeight * 3.5 // 0.5..4
-          // Stronger relationships → darker color
-          const alpha = Math.round(40 + normalizedWeight * 180) // 40..220
-          const color = `rgba(100,116,139,${alpha / 255})` // slate-500 with variable opacity
-          graph.addEdgeWithKey(edgeKey, edge.source, edge.target, {
-            color,
-            size,
-            weight: edge.weight,
-            normalizedWeight,
-            sourceNode: edge.source,
-            targetNode: edge.target,
-            lowPriority: weakEdgeThreshold > 0 && normalizedWeight < weakEdgeThreshold,
-          })
-        }
-      }
-    }
-
-    const runMainThreadLayout = () => {
-      const settings = forceAtlas2.inferSettings(graph)
-      forceAtlas2.assign(graph, {
-        iterations: layoutIterations(nodes.length),
-        settings: {
-          ...settings,
-          gravity: 1,
-          scalingRatio: graphSpacing * (nodes.length > 400 ? 3 : 2),
-          strongGravityMode: true,
-          barnesHutOptimize: nodes.length > 50,
-        },
-      })
-      lastLayoutDataKey = dataKey
-
-      // Cache computed positions
-      graph.forEachNode((nodeId, attrs) => {
-        positionCache.set(nodeId, { x: attrs.x, y: attrs.y })
-      })
-    }
-
-    // Only run expensive ForceAtlas2 layout when data actually changed.
-    // Large graphs are laid out in a Web Worker so the UI remains
-    // responsive while coordinates settle.
-    if (needsLayout && nodes.length > 1 && nodes.length < WORKER_LAYOUT_NODE_THRESHOLD) {
-      runMainThreadLayout()
-    }
-
-    loadGraph(graph)
-
-    if (needsLayout && nodes.length >= WORKER_LAYOUT_NODE_THRESHOLD) {
-      worker = makeLayoutWorker()
-      if (!worker) {
-        runMainThreadLayout()
-        loadGraph(graph)
-        return undefined
-      }
-      pendingLayoutDataKey = dataKey
-
-      worker.onmessage = (event: MessageEvent<{ key: string; positions: Array<{ id: string; x: number; y: number }> }>) => {
-        if (cancelled || event.data.key !== dataKey) return
-        for (const { id, x, y } of event.data.positions) {
-          if (!graph.hasNode(id)) continue
-          graph.setNodeAttribute(id, "x", x)
-          graph.setNodeAttribute(id, "y", y)
-          positionCache.set(id, { x, y })
-        }
-        lastLayoutDataKey = dataKey
-        if (pendingLayoutDataKey === dataKey) pendingLayoutDataKey = ""
-        sigma.refresh()
-      }
-      worker.onerror = (event) => {
-        if (cancelled) return
-        console.warn("[Graph] layout worker failed; falling back to main-thread layout:", event.message)
-        if (pendingLayoutDataKey === dataKey) pendingLayoutDataKey = ""
-        runMainThreadLayout()
-        loadGraph(graph)
-      }
-      worker.postMessage({
-        key: dataKey,
-        nodes: nodes.map((node) => {
-          const cached = positionCache.get(node.id)
-          return {
-            id: node.id,
-            x: cached?.x ?? graph.getNodeAttribute(node.id, "x"),
-            y: cached?.y ?? graph.getNodeAttribute(node.id, "y"),
-          }
-        }),
-        edges: edges.map((edge) => ({ source: edge.source, target: edge.target, weight: edge.weight })),
-        iterations: layoutIterations(nodes.length),
-        scalingRatio: graphSpacing * (nodes.length > 400 ? 3 : 2),
-      })
-    }
-
-    return () => {
-      cancelled = true
-      if (pendingLayoutDataKey === dataKey) pendingLayoutDataKey = ""
-      worker?.terminate()
-    }
-  }, [loadGraph, sigma, nodes, edges, colorMode, nodeScale, graphSpacing])
-
-  return null
-}
-
-function GraphRenderSettings({
-  hoverState,
-  highlightedNodes,
-  nodeCount,
-  palette,
-}: {
-  hoverState: HoverState
-  highlightedNodes: Set<string>
-  nodeCount: number
-  palette: GraphThemePalette
-}) {
-  const sigma = useSigma()
-  const setSettings = useSetSettings()
-
-  useEffect(() => {
-    setSettings({
-      hideEdgesOnMove: true,
-      hideLabelsOnMove: true,
-      labelColor: { color: palette.label },
-      labelDensity: labelDensity(nodeCount),
-      labelRenderedSizeThreshold: labelSizeThreshold(nodeCount),
-      renderEdgeLabels: false,
-      defaultDrawNodeHover: createGraphNodeHoverRenderer(palette),
-      nodeReducer: (node, attrs) => {
-        const result = { ...attrs }
-        const hasHover = !!hoverState
-        const hasHighlight = highlightedNodes.size > 0
-        const isHoverNode = hoverState?.node === node
-        const isHoverNeighbor = hoverState?.neighbors.has(node) ?? false
-        const isHighlighted = highlightedNodes.has(node)
-
-        if (isHighlighted) {
-          result.size = (attrs.size ?? BASE_NODE_SIZE) * 1.5
-          result.zIndex = 10
-          result.forceLabel = true
-        }
-        if (isHoverNode) {
-          result.size = (attrs.size ?? BASE_NODE_SIZE) * 1.4
-          result.zIndex = 10
-          result.forceLabel = true
-        }
-        if ((hasHover && !isHoverNode && !isHoverNeighbor) || (hasHighlight && !isHighlighted)) {
-          result.color = mixColor(attrs.color ?? "#94a3b8", palette.mutedNodeMixTarget, 0.75)
-          result.label = ""
-          result.size = (attrs.size ?? BASE_NODE_SIZE) * 0.6
-        }
-        return result
-      },
-      edgeReducer: (_edge, attrs) => {
-        const result = { ...attrs }
-        const source = String(attrs.sourceNode ?? "")
-        const target = String(attrs.targetNode ?? "")
-        const hasHover = !!hoverState
-        const hasHighlight = highlightedNodes.size > 0
-        const hoverEdge = hasHover && (source === hoverState?.node || target === hoverState?.node)
-        const highlightedEdge = hasHighlight && highlightedNodes.has(source) && highlightedNodes.has(target)
-
-        if (attrs.lowPriority && !hoverEdge && !highlightedEdge) {
-          result.hidden = true
-          return result
-        }
-        if ((hasHover && !hoverEdge) || (hasHighlight && !highlightedEdge)) {
-          result.color = palette.dimmedEdge
-          result.size = 0.3
-        }
-        if (hoverEdge || highlightedEdge) {
-          result.color = palette.activeEdge
-          result.size = Math.max(2, (attrs.size ?? 1) * 1.5)
-        }
-        return result
-      },
-    })
-    sigma.refresh()
-  }, [setSettings, sigma, hoverState, highlightedNodes, nodeCount, palette])
-
-  return null
-}
-
-function EventHandler({
-  onNodeClick,
-  onNodeContextMenu,
-  onHoverChange,
-}: {
-  onNodeClick: (nodeId: string) => void
-  onNodeContextMenu: (nodeId: string, x: number, y: number) => void
-  onHoverChange: (state: HoverState) => void
-}) {
-  const registerEvents = useRegisterEvents()
-  const sigma = useSigma()
-
-  useEffect(() => {
-    registerEvents({
-      clickNode: ({ node }) => onNodeClick(node),
-      rightClickNode: (payload: SigmaNodeEventPayload) => {
-        payload.preventSigmaDefault()
-        payload.event.original.preventDefault()
-        const point = clientPointFromEvent(payload.event.original)
-        onNodeContextMenu(nodeIdFromPayload(payload), point.x, point.y)
-      },
-      rightClickStage: () => onNodeContextMenu("", 0, 0),
-      enterNode: ({ node }) => {
-        const container = sigma.getContainer()
-        container.style.cursor = "pointer"
-        const graph = sigma.getGraph()
-        onHoverChange({ node, neighbors: new Set(graph.neighbors(node)) })
-      },
-      leaveNode: () => {
-        const container = sigma.getContainer()
-        container.style.cursor = "default"
-        onHoverChange(null)
-      },
-    })
-  }, [registerEvents, sigma, onNodeClick, onNodeContextMenu, onHoverChange])
-
-  return null
-}
-
-function nodeIdFromPayload(payload: SigmaNodeEventPayload): string {
-  return payload.node
-}
-
-function clientPointFromEvent(event: MouseEvent | TouchEvent): { x: number; y: number } {
-  if ("clientX" in event) return { x: event.clientX, y: event.clientY }
-  const touch = event.touches[0] ?? event.changedTouches[0]
-  return { x: touch?.clientX ?? 0, y: touch?.clientY ?? 0 }
-}
-
-function ZoomControls() {
-  const sigma = useSigma()
-
-  return (
-    <div className="absolute top-3 right-3 flex flex-col gap-1">
-      <Button
-        variant="outline"
-        size="icon"
-        className="h-7 w-7 bg-background/80 backdrop-blur-sm"
-        onClick={() => {
-          const camera = sigma.getCamera()
-          camera.animatedZoom({ duration: 200 })
-        }}
-      >
-        <ZoomIn className="h-3.5 w-3.5" />
-      </Button>
-      <Button
-        variant="outline"
-        size="icon"
-        className="h-7 w-7 bg-background/80 backdrop-blur-sm"
-        onClick={() => {
-          const camera = sigma.getCamera()
-          camera.animatedUnzoom({ duration: 200 })
-        }}
-      >
-        <ZoomOut className="h-3.5 w-3.5" />
-      </Button>
-      <Button
-        variant="outline"
-        size="icon"
-        className="h-7 w-7 bg-background/80 backdrop-blur-sm"
-        onClick={() => {
-          const camera = sigma.getCamera()
-          camera.animatedReset({ duration: 300 })
-        }}
-      >
-        <Maximize className="h-3.5 w-3.5" />
-      </Button>
-    </div>
-  )
-}
-
 // --- Main component ---
 
 export function GraphView() {
   const { t } = useTranslation()
   const project = useWikiStore((s) => s.project)
   const dataVersion = useWikiStore((s) => s.dataVersion)
-  const isDarkMode = useResolvedDarkMode()
-  const graphPalette = useMemo(() => graphThemePalette(isDarkMode), [isDarkMode])
-  const drawNodeHover = useMemo(() => createGraphNodeHoverRenderer(graphPalette), [graphPalette])
 
   const [nodes, setNodes] = useState<GraphNode[]>([])
   const [edges, setEdges] = useState<GraphEdge[]>([])
@@ -649,9 +166,17 @@ export function GraphView() {
   const filters = graphUiState.filters
   const nodeScale = graphUiState.nodeScale
   const graphSpacingDraft = graphUiState.graphSpacingDraft
+  const nodeColorFor = useCallback(
+    (node: GraphNode) =>
+      colorMode === "community"
+        ? COMMUNITY_COLORS[node.community % COMMUNITY_COLORS.length]
+        : colorMode === "trunk"
+          ? trunkColor(node.trunk)
+          : nodeColor(node.type),
+    [colorMode],
+  )
   const [showInsights, setShowInsights] = useState(false)
   const [highlightedNodes, setHighlightedNodes] = useState<Set<string>>(new Set())
-  const [hoverState, setHoverState] = useState<HoverState>(null)
   const [dismissedInsights, setDismissedInsights] = useState<Set<string>>(new Set())
   const [sigmaKey, setSigmaKey] = useState(0)
   const [isResizing, setIsResizing] = useState(false)
@@ -909,6 +434,17 @@ export function GraphView() {
     return () => observer.disconnect()
   }, [isResizing])
 
+  // Count nodes by trunk for the trunk legend (known trunks first, unclassified last)
+  const trunkCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const n of nodes) counts.set(n.trunk ?? "", (counts.get(n.trunk ?? "") ?? 0) + 1)
+    const known = Object.keys(TRUNK_COLORS)
+    return [...counts.entries()].sort(([a], [b]) => {
+      const rank = (k: string) => (k === "" ? 1e9 : known.includes(k) ? known.indexOf(k) : 1e6)
+      return rank(a) - rank(b) || a.localeCompare(b)
+    })
+  }, [nodes])
+
   // Count nodes by type for legend
   const typeCounts = nodes.reduce<Record<string, number>>((acc, n) => {
     acc[n.type] = (acc[n.type] ?? 0) + 1
@@ -1077,6 +613,15 @@ export function GraphView() {
             <Layers className="h-3 w-3" />
             {t("graph.community")}
           </Button>
+          <Button
+            variant={colorMode === "trunk" ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => setColorMode("trunk")}
+            className="text-xs gap-1 h-7"
+          >
+            <Network className="h-3 w-3" />
+            {t("graph.trunk")}
+          </Button>
           {(surprisingConns.filter((c) => !dismissedInsights.has(c.key)).length > 0 || visibleKnowledgeGaps.length > 0) && (
             <Button
               variant={showInsights ? "secondary" : "ghost"}
@@ -1118,43 +663,17 @@ export function GraphView() {
           ) : (
             <>
               <ErrorBoundary>
-                <SigmaContainer
+                <InkGraphCanvas
                   key={sigmaKey}
-                  style={{ width: "100%", height: "100%", background: "transparent" }}
-                  settings={{
-                    defaultNodeType: "circle",
-                    renderEdgeLabels: false,
-                    hideEdgesOnMove: true,
-                    hideLabelsOnMove: true,
-                    defaultEdgeColor: graphPalette.defaultEdge,
-                    defaultNodeColor: "#94a3b8",
-                    labelSize: 13,
-                    labelWeight: "bold",
-                    labelColor: { color: graphPalette.label },
-                    defaultDrawNodeHover: drawNodeHover,
-                    stagePadding: 30,
-                  }}
-                >
-                  <GraphLoader
-                    nodes={searchedGraph.nodes}
-                    edges={searchedGraph.edges}
-                    colorMode={colorMode}
-                    nodeScale={nodeScale}
-                    graphSpacing={graphSpacing}
-                  />
-                  <EventHandler
-                    onNodeClick={handleNodeClick}
-                    onNodeContextMenu={handleNodeContextMenu}
-                    onHoverChange={setHoverState}
-                  />
-                  <GraphRenderSettings
-                    hoverState={hoverState}
-                    highlightedNodes={searchActive ? searchedGraph.matchedNodeIds : highlightedNodes}
-                    nodeCount={searchedGraph.nodes.length}
-                    palette={graphPalette}
-                  />
-                  <ZoomControls />
-                </SigmaContainer>
+                  nodes={searchedGraph.nodes}
+                  edges={searchedGraph.edges}
+                  colorFor={nodeColorFor}
+                  nodeScale={nodeScale}
+                  graphSpacing={graphSpacing}
+                  highlightedNodes={searchActive ? searchedGraph.matchedNodeIds : highlightedNodes}
+                  onNodeClick={handleNodeClick}
+                  onNodeContextMenu={handleNodeContextMenu}
+                />
               </ErrorBoundary>
 
               {searchedGraph.nodes.length === 0 && (
@@ -1383,10 +902,14 @@ export function GraphView() {
           )}
 
           {/* Legend */}
-          <div className="absolute bottom-3 left-3 rounded-lg border bg-background/90 backdrop-blur-sm px-3 py-2 text-xs shadow-sm max-w-[260px]">
+          <div className="absolute bottom-3 left-3 px-3 py-2 text-xs max-w-[260px]" style={{ color: INK }}>
             <div className="flex items-center justify-between mb-1.5">
               <span className="font-semibold text-foreground">
-                {colorMode === "type" ? t("graph.nodeTypesLabel") : t("graph.communitiesLabel")}
+                {colorMode === "type"
+                  ? t("graph.nodeTypesLabel")
+                  : colorMode === "trunk"
+                    ? t("graph.trunksLabel")
+                    : t("graph.communitiesLabel")}
               </span>
               <div className="flex items-center gap-1">
                 {colorMode === "type" && filters.hiddenTypes.size > 0 && (
@@ -1455,6 +978,18 @@ export function GraphView() {
                       })}
                   </div>
                 </div>
+              ) : colorMode === "trunk" ? (
+                <div className="flex flex-col gap-0.5 max-h-48 overflow-y-auto legend-scroll" style={{ direction: "rtl" }}>
+                  <div className="flex flex-col gap-0.5" style={{ direction: "ltr" }}>
+                    {trunkCounts.map(([trunk, count]) => (
+                      <div key={trunk || "_none"} className="flex items-center gap-2 rounded px-1 py-0.5">
+                        <GlobeMark color={trunkColor(trunk || undefined)} />
+                        <span className="text-muted-foreground truncate">{trunk || t("graph.noTrunk")}</span>
+                        <span className="text-muted-foreground/60 ml-auto shrink-0">{count}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               ) : (
                 <div className="flex flex-col gap-0.5 max-h-48 overflow-y-auto legend-scroll" style={{ direction: "rtl" }}>
                   <div className="flex flex-col gap-0.5" style={{ direction: "ltr" }}>
@@ -1489,6 +1024,18 @@ export function GraphView() {
                   </div>
                 </div>
               )
+            )}
+            {!legendCollapsed && (
+              // Glyph shapes always stand for the page type, whatever the colour mode.
+              <div className="mt-2 flex flex-col gap-0.5">
+                <span className="mb-0.5 font-semibold text-foreground">{t("graph.glyphsLabel")}</span>
+                {GLYPH_LEGEND.map(({ kind, labelKey }) => (
+                  <div key={kind} className="flex items-center gap-2 px-1 py-0.5">
+                    <GlyphMark kind={kind} />
+                    <span className="text-muted-foreground truncate">{t(labelKey)}</span>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </div>

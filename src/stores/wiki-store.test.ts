@@ -198,7 +198,7 @@ describe("wiki preview store actions", () => {
 
     useWikiStore.getState().resetGraphUiState()
     const reset = useWikiStore.getState().graphUiState
-    expect(reset.colorMode).toBe("type")
+    expect(reset.colorMode).toBe("trunk")
     expect(reset.filters.minLinks).toBeUndefined()
     expect(reset.filters.hiddenTypes.size).toBe(0)
     expect(reset.nodeScale).toBe(1)
